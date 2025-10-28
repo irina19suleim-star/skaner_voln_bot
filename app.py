@@ -1,56 +1,49 @@
 import os
-import threading
-from flask import Flask
+from flask import Flask, request
+import telebot
 
-from telegram import Update
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters
-)
+TOKEN = os.environ.get("BOT_TOKEN")
+if not TOKEN:
+    raise RuntimeError("Нет переменной окружения BOT_TOKEN")
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
+bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# --- HTTP healthcheck для Render ---
-@app.route("/")
+# healthcheck
+@app.route("/health", methods=["GET"])
 def health():
-    return "OK", 200
+    return "ok", 200
 
-# --- Handlers Telegram ---
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Привет! Я «Сканер души». Я на связи и готов отвечать 🌿"
-    )
+# Telegram шлёт апдейты сюда
+@app.route(f"/{TOKEN}", methods=["POST"])
+def tg_webhook():
+    update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
+    bot.process_new_updates([update])
+    return "ok", 200
 
-async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (update.message.text or "").strip()
-    if text.lower() in {"привет", "hi", "hello"}:
-        await update.message.reply_text("Привет-привет! ✨")
+# хендлеры
+@bot.message_handler(commands=["start", "help"])
+def cmd_start(msg):
+    bot.reply_to(msg, "Я на связи. Напиши любое слово — отвечу 😉")
+
+@bot.message_handler(func=lambda m: True)
+def echo(msg):
+    bot.reply_to(msg, f"Ты написал(а): <b>{msg.text}</b>")
+
+def setup_webhook():
+    # Render сам даёт внешний URL в переменной RENDER_EXTERNAL_URL
+    base = os.environ.get("RENDER_EXTERNAL_URL")
+    if base:
+        url = f"{base}/{TOKEN}"
+        try:
+            bot.remove_webhook()
+        finally:
+            bot.set_webhook(url=url)
+        print("Webhook set to:", url)
     else:
-        await update.message.reply_text("Я услышал тебя. Команда: /start")
+        print("RENDER_EXTERNAL_URL не найден — вебхук не выставлен")
 
-def run_bot():
-    if not BOT_TOKEN:
-        print("❗BOT_TOKEN не задан. Проверь переменные окружения на Render.")
-        return
-    app_ = Application.builder().token(BOT_TOKEN).build()
-    app_.add_handler(CommandHandler("start", cmd_start))
-    app_.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
-    # long-polling
-    app_.run_polling(allowed_updates=Update.ALL_TYPES)
-
-# Запускаем polling в фоне, а Flask оставляем для Render
-_bot_started = False
-@app.before_first_request
-def activate_bot():
-    global _bot_started
-    if not _bot_started:
-        t = threading.Thread(target=run_bot, daemon=True)
-        t.start()
-        _bot_started = True
+setup_webhook()
 
 if __name__ == "__main__":
-    # локальный запуск
-    port = int(os.environ.get("PORT", 10000))
-    activate_bot()
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
