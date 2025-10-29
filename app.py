@@ -1,37 +1,42 @@
-from flask import Flask, request
 import os
+from flask import Flask, request, abort
 import telebot
 
+TOKEN = os.environ.get("BOT_TOKEN")
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN env var is not set")
+
+# Один поток, чтобы не было гонок в бесплатном инстансе
+bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # https://skaner-voln-bot.onrender.com/webhook/<ТОКЕН>
+# --- HTTP-маршруты (Render будет стучаться сюда) ---
 
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN is not set")
-bot = telebot.TeleBot(BOT_TOKEN)
-
-@app.route("/", methods=["GET"])
+@app.get("/")
 def index():
-    return "OK", 200
+    return "OK skaner_voln_bot", 200
 
-@app.route("/health", methods=["GET"])
-def health():
-    return "healthy", 200
-
-@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
+@app.post(f"/{TOKEN}")
 def telegram_webhook():
-    upd = telebot.types.Update.de_json(request.data.decode("utf-8"))
-    bot.process_new_updates([upd])
-    return "", 200
+    if request.headers.get("content-type") == "application/json":
+        update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
+        bot.process_new_updates([update])
+        return "!", 200
+    abort(403)
 
-@bot.message_handler(commands=["start"])
-def handle_start(msg):
-    bot.reply_to(msg, "Привет 🌿 Я запущен!")
+# --- Хендлеры бота ---
 
-# Настраиваем webhook перед первым запросом (при старте инстанса)
+@bot.message_handler(commands=["start", "help"])
+def start(m):
+    bot.send_message(m.chat.id, "Привет! Я на Render и уже работаю 🔮")
+
+@bot.message_handler(func=lambda m: True)
+def echo(m):
+    bot.send_message(m.chat.id, "Принято: " + m.text)
+
+# --- Включаем веб-хук при старте веб-приложения ---
 @app.before_first_request
 def setup_webhook():
-    if WEBHOOK_URL:
-        bot.remove_webhook()
-        bot.set_webhook(url=WEBHOOK_URL)
+    base = os.environ.get("RENDER_EXTERNAL_URL", "https://skaner-voln-bot.onrender.com").rstrip("/")
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{base}/{TOKEN}")
