@@ -2,41 +2,34 @@ import os
 from flask import Flask, request, abort
 import telebot
 
-TOKEN = os.environ.get("BOT_TOKEN")
+TOKEN = os.environ.get("BOT_TOKEN", "").strip()  # без пробелов/кавычек!
 if not TOKEN:
-    raise RuntimeError("BOT_TOKEN env var is not set")
+    raise RuntimeError("BOT_TOKEN отсутствует в переменных окружения")
 
-# Один поток, чтобы не было гонок в бесплатном инстансе
-bot = telebot.TeleBot(TOKEN, threaded=False)
+bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# --- HTTP-маршруты (Render будет стучаться сюда) ---
-
+# 1) Простой корень — чтобы Render видел «живой» сервис
 @app.get("/")
 def index():
-    return "OK skaner_voln_bot", 200
+    return "OK", 200
 
-@app.post(f"/{TOKEN}")
-def telegram_webhook():
-    if request.headers.get("content-type") == "application/json":
-        update = telebot.types.Update.de_json(request.get_data().decode("utf-8"))
-        bot.process_new_updates([update])
-        return "!", 200
-    abort(403)
+# 2) Вебхук-эндпоинт — сюда Telegram будет слать обновления
+@app.post("/webhook")
+def tg_webhook():
+    if request.headers.get('content-type') != 'application/json':
+        abort(403)
+    update = request.get_data().decode("utf-8")
+    bot.process_new_updates([telebot.types.Update.de_json(update)])
+    return "OK", 200
 
-# --- Хендлеры бота ---
+# 3) Никаких обращений к Telegram при импорте/старте!
+#    Хэндлеры ниже — они «спят», пока не придёт апдейт от вебхука.
 
-@bot.message_handler(commands=["start", "help"])
-def start(m):
-    bot.send_message(m.chat.id, "Привет! Я на Render и уже работаю 🔮")
+@bot.message_handler(commands=['start'])
+def start_handler(m):
+    bot.send_message(m.chat.id, "Привет! Я на связи ✨")
 
-@bot.message_handler(func=lambda m: True)
-def echo(m):
-    bot.send_message(m.chat.id, "Принято: " + m.text)
-
-# --- Включаем веб-хук при старте веб-приложения ---
-@app.before_first_request
-def setup_webhook():
-    base = os.environ.get("RENDER_EXTERNAL_URL", "https://skaner-voln-bot.onrender.com").rstrip("/")
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{base}/{TOKEN}")
+# Gunicorn будет искать переменную app
+# if __name__ == "__main__":    # локально — по желанию
+#     app.run(host="0.0.0.0", port=8000)
