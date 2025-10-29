@@ -2,34 +2,32 @@ from flask import Flask, request
 import telebot
 import os
 
-# Токен берётся из переменных окружения Render
 TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# --- Основной маршрут (корень) ---
-@app.route('/', methods=['POST', 'GET'])
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot is running 🏄‍♂️", 200
+
+@app.route("/webhook", methods=["POST"])
 def webhook():
-    if request.method == 'POST':
-        # Приходит обновление от Telegram
-        update = telebot.types.Update.de_json(request.stream.read().decode('utf-8'))
+    try:
+        json_str = request.get_data(as_text=True)
+        update = telebot.types.Update.de_json(json_str)
         bot.process_new_updates([update])
-        return "OK", 200
-    else:
-        # Проверка, что сервер запущен
-        return "Bot is running 🌊", 200
+    except Exception as e:
+        print("Webhook error:", e)
+    return "OK", 200
 
-
-# --- Команды бота ---
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=["start"])
 def start(message):
     bot.send_message(message.chat.id, "Привет! Я Сканер Души 🌊✨")
 
-@bot.message_handler(func=lambda message: True)
+@bot.message_handler(func=lambda m: True)
 def echo(message):
-    bot.send_message(message.chat.id, f"Ты написал(а): {message.text}")
+    bot.send_message(message.chat.id, f"Ты написала: {message.text}")
 
-
-# --- Запуск приложения ---
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
